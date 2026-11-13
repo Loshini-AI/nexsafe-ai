@@ -1,0 +1,14 @@
+{
+  "architecture": "YOLO11",
+  "dataset": "UVH-26",
+  "annotation_variant": "majority_voting",
+  "image_size": 960,
+  "epochs": 100,
+  "batch_size": 8,
+  "device": "auto",
+  "seed": 42,
+  "workers": 4,
+  "patience": 20,
+  "project": "runs/detect",
+  "name": "nexsafe-uvh26-yolo11"
+}

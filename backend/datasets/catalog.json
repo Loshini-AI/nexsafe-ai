@@ -1,0 +1,90 @@
+{
+  "verified_at": "2026-11-01",
+  "sources": [
+    {
+      "id": "uvh-26",
+      "name": "UVH-26",
+      "url": "https://huggingface.co/datasets/iisc-aim/UVH-26",
+      "paper_url": "https://arxiv.org/abs/2511.02563",
+      "status": "public_download_available",
+      "license": "CC BY 4.0",
+      "license_url": "https://creativecommons.org/licenses/by/4.0/",
+      "size_reported": "26,646 high-resolution 1920x1080 images; source PNG payload is 89,844,752,340 bytes (89.84 GB / 83.67 GiB); 80/20 publisher train/validation; 14 vehicle categories",
+      "size_bytes": 89844752340,
+      "annotations": "COCO JSON, both Majority Voting and STAPLE variants",
+      "classes": [
+        "Hatchback",
+        "Sedan",
+        "SUV",
+        "MUV",
+        "Bus",
+        "Truck",
+        "Three-wheeler",
+        "Two-wheeler",
+        "LCV",
+        "Mini-bus",
+        "Tempo-traveller",
+        "Bicycle",
+        "Van",
+        "Others"
+      ],
+      "supported_tasks": ["vehicle_detection"],
+      "not_supported": ["video_temporal_accident_detection", "pedestrian_detection", "motorcycle_vs_scooter_classification"],
+      "download_authentication": "Public, ungated Hugging Face repository",
+      "download_note": "Images are multi-megabyte each; fetching the complete corpus requires many tens of gigabytes. Application startup does not download it; the revision-pinned downloader requires explicit license acknowledgement.",
+      "revision": "59f82c57821e8a54dc40bc1f42e83909dbad0b70"
+    },
+    {
+      "id": "accident-cvpr",
+      "name": "ACCIDENT: A Benchmark Dataset for Vehicle Accident Detection from Traffic Surveillance Videos",
+      "url": "https://accidentbench.github.io/",
+      "repository_url": "https://github.com/accidentbench/ACCIDENT",
+      "status": "access_requires_kaggle_authentication_and_noncommercial_license_review",
+      "license": "CC BY-NC-SA 4.0 (current Kaggle dataset metadata; non-commercial and share-alike restrictions)",
+      "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+      "size_reported": "20,158,641,093 bytes archive; 2,027 real surveillance clips and 2,211 CARLA synthetic clips according to source metadata",
+      "size_bytes": 20158641093,
+      "annotations": "Collision types, temporal accident point, spatial accident location; synthetic subset additionally documents boxes, masks, and tracklets",
+      "supported_tasks": ["temporal_accident_detection", "collision_type_classification"],
+      "download_authentication": "Kaggle CLI login required for picekl/accident",
+      "download_note": "Dataset archive is not bundled. Kaggle CLI credentials are absent locally. Do not use for commercial NexSafe deployments without separate written permission; attached/downloaded media must remain within the applicable license."
+    },
+    {
+      "id": "iith-accident",
+      "name": "IITH Accident Dataset / VIGIL resources",
+      "url": "https://www.iith.ac.in/vigil/resources.html",
+      "status": "source_url_unavailable_at_check",
+      "license": "Unverified",
+      "size_reported": null,
+      "annotations": "Unverified",
+      "supported_tasks": [],
+      "download_authentication": "Unknown",
+      "download_note": "The supplied URL returned HTTP 404. No mirrors are assumed or scraped."
+    },
+    {
+      "id": "idd",
+      "name": "India Driving Dataset (IDD)",
+      "url": "https://idd.insaan.iiit.ac.in/",
+      "status": "registration_required_license_shown_before_download",
+      "license": "Must be reviewed on the authenticated download page before use",
+      "size_reported": "10,000 images from 182 driving sequences; 34 classes; predominantly 1080p",
+      "annotations": "Fine-grained road-scene segmentation labels",
+      "supported_tasks": ["road_scene_segmentation"],
+      "not_supported": ["temporal_accident_detection", "accident_type_classification"],
+      "download_authentication": "Account registration required",
+      "download_note": "Images are not accident labels. No download performed without an account and license review."
+    },
+    {
+      "id": "tu-dat",
+      "name": "TU-DAT",
+      "url": "https://doi.org/10.3390/s25113259",
+      "status": "paper_accessible_dataset_download_unverified",
+      "license": "Paper is CC BY 4.0; dataset/media-specific reuse terms were not independently verified",
+      "size_reported": "Approximately 280 real-world and simulated videos, as described in the paper metadata",
+      "annotations": "Paper describes spatiotemporal annotations, vehicle trajectories, collision types, and road conditions",
+      "supported_tasks": ["temporal_accident_detection", "collision_type_classification", "road_risk_research"],
+      "download_authentication": "Not determined",
+      "download_note": "Publisher dataset details were inaccessible during verification. Real and simulated clips must be separated in metadata and evaluation."
+    }
+  ]
+}

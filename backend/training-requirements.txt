@@ -1,0 +1,3 @@
+-r vision-requirements.txt
+huggingface_hub>=0.27,<1
+truststore>=0.10,<1

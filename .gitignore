@@ -1,0 +1,13 @@
+.env
+.venv/
+.venv-backend311/
+venv/
+__pycache__/
+*.py[cod]
+node_modules/
+.next/
+coverage/
+data/
+models/
+*.log
+*.tsbuildinfo
