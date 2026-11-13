@@ -83,8 +83,20 @@ function Get-AvailablePort([int]$PreferredPort) {
     }
 }
 
+function Get-ListeningPort([int]$FirstPort, [int]$LastPort) {
+    $listeners = @(
+        Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+            Where-Object {
+                $_.LocalPort -ge $FirstPort -and $_.LocalPort -le $LastPort
+            } |
+            Select-Object -ExpandProperty LocalPort -Unique |
+            Sort-Object
+    )
+    return $listeners
+}
+
 function Find-ExistingFrontendPort {
-    for ($port = 3000; $port -lt 3020; $port++) {
+    foreach ($port in (Get-ListeningPort 3000 3019)) {
         try {
             $response = Invoke-WebRequest `
                 -Uri "http://127.0.0.1:$port/dashboard" `
@@ -94,6 +106,22 @@ function Find-ExistingFrontendPort {
                 $response.StatusCode -eq 200 -and
                 $response.Content -match "<title>NexSafe AI"
             ) {
+                return $port
+            }
+        }
+        catch {
+        }
+    }
+    return $null
+}
+
+function Find-ExistingBackendPort {
+    foreach ($port in (Get-ListeningPort 8000 8019)) {
+        try {
+            $health = Invoke-RestMethod `
+                -Uri "http://127.0.0.1:$port/api/health" `
+                -TimeoutSec 10
+            if ($health.services.database -eq "available") {
                 return $port
             }
         }
@@ -160,7 +188,15 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     throw "Node.js and npm are required but npm was not found on PATH."
 }
 
-$BackendPort = Get-AvailablePort 8000
+$ExistingBackendPort = Find-ExistingBackendPort
+$reuseBackend = $null -ne $ExistingBackendPort
+if ($reuseBackend) {
+    $BackendPort = $ExistingBackendPort
+    Write-Output "Reusing the existing NexSafe API on port $BackendPort."
+}
+else {
+    $BackendPort = Get-AvailablePort 8000
+}
 $ExistingFrontendPort = Find-ExistingFrontendPort
 $reuseFrontend = $null -ne $ExistingFrontendPort
 if ($reuseFrontend) {
@@ -177,31 +213,34 @@ $BackendStderr = Join-Path $LogRoot "backend-$stamp.err.log"
 $FrontendStdout = Join-Path $LogRoot "frontend-$stamp.out.log"
 $FrontendStderr = Join-Path $LogRoot "frontend-$stamp.err.log"
 
-$previousFrontendOrigin = [Environment]::GetEnvironmentVariable(
-    "FRONTEND_ORIGIN",
-    "Process"
-)
-$previousUploadDirectory = [Environment]::GetEnvironmentVariable(
-    "UPLOAD_DIR",
-    "Process"
-)
-$env:FRONTEND_ORIGIN = "http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort"
-$env:UPLOAD_DIR = Join-Path $ProjectRoot "data\uploads"
-try {
-    $backendProcess = Start-Process `
-        -FilePath $PythonPath `
-        -ArgumentList @(
-            "-m", "uvicorn", "app.main:app",
-            "--host", "127.0.0.1", "--port", "$BackendPort"
-        ) `
-        -WorkingDirectory $BackendRoot `
-        -RedirectStandardOutput $BackendStdout `
-        -RedirectStandardError $BackendStderr `
-        -PassThru
-}
-finally {
-    Restore-ProcessEnvironment "FRONTEND_ORIGIN" $previousFrontendOrigin
-    Restore-ProcessEnvironment "UPLOAD_DIR" $previousUploadDirectory
+$backendProcess = $null
+if (-not $reuseBackend) {
+    $previousFrontendOrigin = [Environment]::GetEnvironmentVariable(
+        "FRONTEND_ORIGIN",
+        "Process"
+    )
+    $previousUploadDirectory = [Environment]::GetEnvironmentVariable(
+        "UPLOAD_DIR",
+        "Process"
+    )
+    $env:FRONTEND_ORIGIN = "http://localhost:$FrontendPort,http://127.0.0.1:$FrontendPort"
+    $env:UPLOAD_DIR = Join-Path $ProjectRoot "data\uploads"
+    try {
+        $backendProcess = Start-Process `
+            -FilePath $PythonPath `
+            -ArgumentList @(
+                "-m", "uvicorn", "app.main:app",
+                "--host", "127.0.0.1", "--port", "$BackendPort"
+            ) `
+            -WorkingDirectory $BackendRoot `
+            -RedirectStandardOutput $BackendStdout `
+            -RedirectStandardError $BackendStderr `
+            -PassThru
+    }
+    finally {
+        Restore-ProcessEnvironment "FRONTEND_ORIGIN" $previousFrontendOrigin
+        Restore-ProcessEnvironment "UPLOAD_DIR" $previousUploadDirectory
+    }
 }
 
 $frontendProcess = $null
@@ -229,7 +268,7 @@ $apiUrl = "http://127.0.0.1:$BackendPort"
 $frontendUrl = "http://127.0.0.1:$FrontendPort"
 $apiReady = $false
 for ($attempt = 0; $attempt -lt 60; $attempt++) {
-    if ($backendProcess.HasExited) {
+    if ($null -ne $backendProcess -and $backendProcess.HasExited) {
         break
     }
     try {
@@ -247,7 +286,7 @@ for ($attempt = 0; $attempt -lt 60; $attempt++) {
 if (-not $apiReady) {
     $apiLogs = (Get-LogTail $BackendStdout) + [Environment]::NewLine +
         (Get-LogTail $BackendStderr)
-    if (-not $backendProcess.HasExited) {
+    if ($null -ne $backendProcess -and -not $backendProcess.HasExited) {
         Stop-Process -Id $backendProcess.Id
     }
     if ($null -ne $frontendProcess -and -not $frontendProcess.HasExited) {
@@ -276,7 +315,7 @@ for ($attempt = 0; $attempt -lt 60; $attempt++) {
 if (-not $frontendReady) {
     $frontendLogs = (Get-LogTail $FrontendStdout) + [Environment]::NewLine +
         (Get-LogTail $FrontendStderr)
-    if (-not $backendProcess.HasExited) {
+    if ($null -ne $backendProcess -and -not $backendProcess.HasExited) {
         Stop-Process -Id $backendProcess.Id
     }
     if ($null -ne $frontendProcess -and -not $frontendProcess.HasExited) {
@@ -289,6 +328,7 @@ Write-Output "NexSafe AI is ready."
 Write-Output "Website: $frontendUrl/dashboard"
 Write-Output "API health: $apiUrl/api/health"
 $frontendProcessId = if ($reuseFrontend) { "existing" } else { $frontendProcess.Id }
-Write-Output "Backend PID: $($backendProcess.Id); frontend PID: $frontendProcessId"
+$backendProcessId = if ($reuseBackend) { "existing" } else { $backendProcess.Id }
+Write-Output "Backend PID: $backendProcessId; frontend PID: $frontendProcessId"
 Write-Output "Logs: $LogRoot"
 Start-Process $frontendUrl

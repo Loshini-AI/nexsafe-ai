@@ -1,10 +1,46 @@
 # NexSafe AI project status
 
-**Audit date:** 2026-11-03  
+**Audit date:** 2026-11-13
 **Workspace:** `C:\Users\lokes\Desktop\accient`  
-**Scope:** Initial audit plus subsequent implementation and verification updates.
-No application or dataset files were deleted. This folder has no Git metadata,
-so a repository diff/history was not available.
+**Scope:** Initial audit plus subsequent implementation, GitHub publication,
+and verification updates. See [PROJECT_AUDIT.md](./PROJECT_AUDIT.md) for the
+current feature-by-feature audit and evidence.
+
+## Current verification (2026-11-13)
+
+- Published the existing source tree to
+  `https://github.com/Loshini-AI/nexsafe-ai`; branch `main`, commit
+  `e6dafa22c996cb722e1ca77b0ed27e6d383f89db`. The worktree was clean at
+  publication. Local `.env`, databases, backups, datasets, model weights,
+  Python virtual environments, and frontend build/dependency directories are
+  ignored and were not committed.
+- The project now includes `start-nexsafe.ps1`, project-local SQLite
+  configuration fallback, SQLite online backups with integrity validation,
+  and focused backup tests.
+- Latest complete test run: **25 backend tests passed**; frontend type-check
+  (`npm run check`) and production build (`npm run build`) passed.
+- Live local health is HTTP 200 with SQLite available and process-local
+  realtime fallback. The dashboard returns HTTP 200. CORS preflight from the
+  local frontend origin is allowed.
+- Live model endpoint reports detector, accident classifier, and structured
+  road-risk model **unavailable** because no model weights are configured.
+- Live dataset endpoint reports an incomplete UVH-26 split: **5,472** of
+  **21,349** training images present, **15,877** missing, **no validation
+  images**, and **2 image dimension mismatches**. The dataset labels support
+  vehicle detection, not accident-risk training.
+- Local dataset inventory is **10,953 files / 18,638,629,391 bytes** outside
+  the repository on `D:`. It was not downloaded, copied, or modified during
+  this work.
+- The existing SQLite database on `D:` was preserved. Its project-local
+  **90,112-byte** backup passed `PRAGMA integrity_check` and contains the
+  application tables.
+- Signup/account modifications were not performed against the actual database;
+  auth tests use isolated SQLite test databases. Production PostgreSQL, Redis,
+  external government credentials, configured cameras, and real model
+  inference are not required for local startup and were not used.
+- Profile/settings and admin-management pages, verified incident mapping, and
+  production accessibility/security reviews remain incomplete. See the audit
+  for feature statuses, test evidence, and prioritized requirements.
 
 ## Continued implementation (2026-11-03)
 
