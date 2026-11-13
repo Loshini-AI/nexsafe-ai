@@ -9,16 +9,17 @@ current feature-by-feature audit and evidence.
 ## Current verification (2026-11-13)
 
 - Published the existing source tree to
-  `https://github.com/Loshini-AI/nexsafe-ai`; branch `main`, commit
-  `e6dafa22c996cb722e1ca77b0ed27e6d383f89db`. The worktree was clean at
-  publication. Local `.env`, databases, backups, datasets, model weights,
-  Python virtual environments, and frontend build/dependency directories are
-  ignored and were not committed.
+  `https://github.com/Loshini-AI/nexsafe-ai`; branch `main`. The initial
+  publication commit was `e6dafa22c996cb722e1ca77b0ed27e6d383f89db`; latest
+  previously published commit is `171bfad`. Local `.env`, databases, backups,
+  datasets, model weights, Python virtual environments, and frontend
+  build/dependency directories are ignored and were not committed.
 - The project now includes `start-nexsafe.ps1`, project-local SQLite
   configuration fallback, SQLite online backups with integrity validation,
   and focused backup tests.
-- Latest complete test run: **25 backend tests passed**; frontend type-check
-  (`npm run check`) and production build (`npm run build`) passed.
+- Latest complete test run before the newest provider integration: **25 backend
+  tests passed**; frontend type-check (`npm run check`) and production build
+  (`npm run build`) passed.
 - Live local health is HTTP 200 with SQLite available and process-local
   realtime fallback. The dashboard returns HTTP 200. CORS preflight from the
   local frontend origin is allowed.
@@ -41,6 +42,29 @@ current feature-by-feature audit and evidence.
 - Profile/settings and admin-management pages, verified incident mapping, and
   production accessibility/security reviews remain incomplete. See the audit
   for feature statuses, test evidence, and prioritized requirements.
+
+## Optional hosted object detection (2026-11-13)
+
+- Added opt-in Hugging Face Inference Providers integration for generic
+  `facebook/detr-resnet-50` object detection, using a backend-only
+  `HF_INFERENCE_TOKEN`. Local inference remains the default. The hosted model
+  does **not** classify accidents or predict road risk.
+- Authenticated uploads require explicit privacy consent before images or a
+  bounded set of sampled video frames is sent to Hugging Face. NexSafe removes
+  temporary media and stores user-scoped analysis metadata/detections only.
+  Video sampling is not continuous inference or tracking.
+- Added authenticated `GET /api/analyses`, SQLite schema initialization, and
+  Alembic migration `0004_analysis_history`. The current preserved user
+  database was not changed.
+- Verified: **32 backend tests passed**, frontend type-check and production
+  build passed, Alembic history migration passed on a disposable SQLite
+  database, and backend compile/dependency checks passed. Provider tests use
+  mocked HTTP responses; live Hugging Face inference is unverified because no
+  token is configured. No external media was transmitted.
+- Hugging Face Inference Providers may be paid; free accounts do not include
+  inference credits. Review provider terms and pricing before enabling it.
+  Configuration and limitations are documented in the root README and
+  `.env.example`.
 
 ## Continued implementation (2026-11-03)
 

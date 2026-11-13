@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, JSON, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -70,6 +70,28 @@ class InferenceRecord(Base):
     processed_frames: Mapped[int] = mapped_column(Integer, default=0)
     latency_ms: Mapped[float] = mapped_column(Float)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc, index=True)
+
+
+class AnalysisRecord(Base):
+    __tablename__ = "analysis_records"
+    __table_args__ = (
+        Index("ix_analysis_records_owner_created", "owner_id", "created_at"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    owner_id: Mapped[str] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    provider: Mapped[str] = mapped_column(String(80))
+    model: Mapped[str] = mapped_column(String(200))
+    task: Mapped[str] = mapped_column(String(60))
+    media_type: Mapped[str] = mapped_column(String(20))
+    media_width: Mapped[int] = mapped_column(Integer)
+    media_height: Mapped[int] = mapped_column(Integer)
+    processed_frames: Mapped[int] = mapped_column(Integer, default=1)
+    latency_ms: Mapped[float] = mapped_column(Float)
+    result: Mapped[dict[str, Any]] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=now_utc)
 
 
 class GovernmentDataSnapshot(Base):

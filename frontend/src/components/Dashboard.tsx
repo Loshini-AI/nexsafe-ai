@@ -17,8 +17,10 @@ type ModelMetrics = { accuracy?: number; macro_precision?: number; macro_recall?
 type DetectorTrainingMetrics = { epochs_recorded: number; last_epoch: number; last_epoch_training_losses: Record<string, number> };
 type DatasetStatus = { status: string; message: string; last_audited: string | null; dataset: { name: string; source: string; license: string; revision: string; supported_tasks: string[]; not_supported: string[] } | null; splits: { name: string; status: string; available_images: number | null; annotated_images: number | null; missing_images: number | null; annotations: number | null; image_bytes: number | null; dimension_mismatches: number | null }[] };
 type DetectionResult = { class_id: number; label: string; confidence: number; xyxy: number[] };
-type ImageInference = { detections: DetectionResult[]; latency_ms: number; image_dimensions: { width: number; height: number } };
-type Model = { status: string; message: string | null; architecture: string | null; weights_configured: boolean; detector: { status: string; error: string | null; architecture: string | null; classes: string[]; model_version: string | null; dataset: string | null; training_metrics: DetectorTrainingMetrics | null; validation_metrics: ModelMetrics | null; test_metrics: ModelMetrics | null; metrics_note: string | null; training_info: { config?: { epochs?: number }; trained_at?: string } | null }; accident_classifier: { status: string; architecture: string | null; message: string | null; version: string | null; classes: string[]; evaluation_metrics: ModelMetrics | null; test_metrics: ModelMetrics | null; training_info: { dataset_name?: string; data_domain?: string; train_segments?: number; validation_segments?: number; test_segments?: number; epochs?: number; device?: string } | null }; structured_road_risk: { status: string; architecture: string | null; message: string | null; version: string | null; features: string[]; classes: string[]; evaluation_metrics: { validation?: ModelMetrics; test?: ModelMetrics } | null; training_info: { dataset_name?: string; label_definition?: string } | null } };
+type ImageInference = { detections: DetectionResult[]; latency_ms: number; image_dimensions: { width: number; height: number }; provider?: string; model?: string; task?: string; analysis_id?: string; notice?: string };
+type AnalysisHistoryRecord = { id: string; provider: string; model: string; task: string; media_type: string; media_width: number; media_height: number; processed_frames: number; latency_ms: number; result: { detections?: DetectionResult[]; frames_sampled?: number; notice?: string }; created_at: string };
+type HostedInferenceStatus = { provider: string; provider_id: string; selected: boolean; configured: boolean; status: string; model: string; task: string; max_video_frames: number; model_url: string; provider_url: string; privacy_notice: string; limitations: string };
+type Model = { status: string; message: string | null; architecture: string | null; weights_configured: boolean; hosted_inference: HostedInferenceStatus; detector: { status: string; error: string | null; architecture: string | null; classes: string[]; model_version: string | null; dataset: string | null; training_metrics: DetectorTrainingMetrics | null; validation_metrics: ModelMetrics | null; test_metrics: ModelMetrics | null; metrics_note: string | null; training_info: { config?: { epochs?: number }; trained_at?: string } | null }; accident_classifier: { status: string; architecture: string | null; message: string | null; version: string | null; classes: string[]; evaluation_metrics: ModelMetrics | null; test_metrics: ModelMetrics | null; training_info: { dataset_name?: string; data_domain?: string; train_segments?: number; validation_segments?: number; test_segments?: number; epochs?: number; device?: string } | null }; structured_road_risk: { status: string; architecture: string | null; message: string | null; version: string | null; features: string[]; classes: string[]; evaluation_metrics: { validation?: ModelMetrics; test?: ModelMetrics } | null; training_info: { dataset_name?: string; label_definition?: string } | null } };
 type GovernmentSource = { key: string; name: string; source_url: string; status: string; freshness: string; data_kind: string; source_timestamp: string | null; last_successful_sync: string | null; last_attempt: string | null; error: string | null; data: Record<string, unknown> | null };
 type GovernmentData = { sources: Record<string, GovernmentSource> };
 type GovernmentRecord = Record<string, unknown>;
@@ -74,6 +76,8 @@ export default function Dashboard() {
   const [imageInference, setImageInference] = useState<ImageInference | null>(null);
   const [imageInferenceMessage, setImageInferenceMessage] = useState("");
   const [imageInferenceLoading, setImageInferenceLoading] = useState(false);
+  const [hostedPrivacyConsent, setHostedPrivacyConsent] = useState(false);
+  const [analysisHistory, setAnalysisHistory] = useState<AnalysisHistoryRecord[]>([]);
   const [liveFrames, setLiveFrames] = useState<Record<string, LiveFrame>>({});
   const [systemMetrics, setSystemMetrics] = useState<{ cpu_percent: number; memory_percent: number; gpu: { available: boolean } } | null>(null);
 
@@ -144,15 +148,15 @@ export default function Dashboard() {
     if (!token) return;
     setLoading(true);
     try {
-      const [cam, ev, over, analytic, modelStatus, dataset, system, government] = await Promise.all([
+      const [cam, ev, over, analytic, modelStatus, dataset, system, government, history] = await Promise.all([
         request("/api/cameras"), request("/api/events"), request("/api/overview"),
         request("/api/analytics"), request("/api/model"), request("/api/datasets/status"), request("/api/system"),
-        request("/api/government"),
+        request("/api/government"), request("/api/analyses?limit=20"),
       ]);
-      setCameras(cam); setEvents(ev); setOverview(over); setAnalytics(analytic); setModel(modelStatus); setDatasetStatus(dataset); setSystemMetrics(system); setGovernmentData(government); setGovernmentBackendUnavailable(false); setDataAvailable(true); setError("");
+      setCameras(cam); setEvents(ev); setOverview(over); setAnalytics(analytic); setModel(modelStatus); setDatasetStatus(dataset); setSystemMetrics(system); setGovernmentData(government); setAnalysisHistory(history); setGovernmentBackendUnavailable(false); setDataAvailable(true); setError("");
     } catch (reason) {
       setDataAvailable(false);
-      setCameras([]); setEvents([]); setOverview(null); setAnalytics(null); setModel(null); setDatasetStatus(null); setSystemMetrics(null); setGovernmentBackendUnavailable(true);
+      setCameras([]); setEvents([]); setOverview(null); setAnalytics(null); setModel(null); setDatasetStatus(null); setSystemMetrics(null); setAnalysisHistory([]); setGovernmentBackendUnavailable(true);
       setError(reason instanceof Error ? reason.message : "Unable to load service data");
     } finally { setLoading(false); }
   }, [request, token]);
@@ -286,6 +290,7 @@ export default function Dashboard() {
       setDatasetStatus(null);
       setSystemMetrics(null);
       setGovernmentData(null);
+      setAnalysisHistory([]);
       setGovernmentBackendUnavailable(false);
     }
   };
@@ -307,24 +312,45 @@ export default function Dashboard() {
     if (!file) return;
     setUploadMessage("Uploading and analyzing video…");
     const data = new FormData(); data.set("file", file);
+    const hosted = model?.hosted_inference.selected === true;
+    if (hosted && !model?.hosted_inference.configured) {
+      setUploadMessage("Hosted inference is selected but its backend token is not configured. No video was sent.");
+      return;
+    }
+    if (hosted && !hostedPrivacyConsent) {
+      setUploadMessage("Confirm the hosted-inference privacy notice before uploading video frames.");
+      return;
+    }
+    data.set("privacy_consent", String(hosted && hostedPrivacyConsent));
     try {
       const result = await request("/api/videos/analyze", { method: "POST", body: data });
       const strongest = result.risk_predictions.reduce((best: RiskPrediction & { frame: number } | null, item: RiskPrediction & { frame: number }) => (
         !best || item.risk_score > best.risk_score ? item : best
       ), null);
       setUploadMessage(`${result.frames_processed} actual frames analyzed · ${result.detections.length} object detections · ${result.risk_predictions.length} temporal risk predictions.${strongest ? ` Highest model output: ${strongest.class} · score ${strongest.risk_score.toFixed(3)} · frame ${strongest.frame}.` : ""} Predictions are not confirmed accidents.`);
+      if (hosted && result.notice) setUploadMessage(`${result.notice} ${result.detections.length} detections returned.`);
       await refresh();
     } catch (reason) { setUploadMessage(reason instanceof Error ? reason.message : "Video analysis failed"); }
   };
 
   const uploadImage = async (file?: File) => {
     if (!file) return;
+    const hosted = model?.hosted_inference.selected === true;
+    if (hosted && !model?.hosted_inference.configured) {
+      setImageInferenceMessage("Hosted inference is selected but its backend token is not configured. No image was sent.");
+      return;
+    }
+    if (hosted && !hostedPrivacyConsent) {
+      setImageInferenceMessage("Confirm the hosted-inference privacy notice before uploading this image.");
+      return;
+    }
     setImagePreview(URL.createObjectURL(file));
     setImageInference(null);
     setImageInferenceMessage("Preparing uploaded image for model inference…");
     setImageInferenceLoading(true);
     const formData = new FormData();
     formData.append("file", file);
+    formData.append("privacy_consent", String(hosted && hostedPrivacyConsent));
     try {
       const result = await request("/api/inference/vehicle-detection", {
         method: "POST",
@@ -332,8 +358,9 @@ export default function Dashboard() {
       });
       setImageInference(result);
       setImageInferenceMessage(
-        `Actual model inference completed · ${result.detections.length} detections · ${result.latency_ms.toFixed(1)} ms`,
+        `${result.provider || "Local inference"} · ${result.model || "configured model"} · ${result.detections.length} object detections · ${result.latency_ms.toFixed(1)} ms. ${result.notice || ""}`,
       );
+      await refresh();
     } catch (reason) {
       setImageInferenceMessage(reason instanceof Error ? reason.message : "Image inference failed");
     } finally {
@@ -400,7 +427,7 @@ export default function Dashboard() {
         {guestMode && <div className="mb-5 rounded-lg border border-amber-400/20 bg-amber-400/[.05] px-4 py-3 text-xs leading-5 text-amber-100/80">Read-only workspace preview. No account is signed in, no service data is connected, and no sample records are displayed. To manage cameras or view real data, sign in to a configured backend.</div>}
         {error && <div role="alert" className="mb-5 flex items-start justify-between gap-3 rounded-lg border border-emergency/20 bg-emergency/[.07] px-4 py-3 text-sm text-rose-200"><span>{error}</span><button onClick={() => setError("")}><X size={15} /></button></div>}
         {view === "overview" && <OverviewView overview={overview} events={events} model={model} systemMetrics={systemMetrics} governmentData={governmentData} governmentBackendUnavailable={governmentBackendUnavailable} loading={loading} dataAvailable={dataAvailable} onNavigate={setView} />}
-        {view === "monitoring" && <MonitoringView cameras={cameras} liveFrames={liveFrames} readOnly={guestMode} dataAvailable={dataAvailable} onAdd={() => setCameraForm(true)} onUpload={uploadVideo} onImageUpload={uploadImage} imagePreview={imagePreview} imageInference={imageInference} imageInferenceMessage={imageInferenceMessage} imageInferenceLoading={imageInferenceLoading} onStart={async (id) => { try { await request(`/api/cameras/${id}/start`, { method: "POST" }); } catch (e) { setError(e instanceof Error ? e.message : "Could not start camera"); } }} onStop={async (id) => { try { await request(`/api/cameras/${id}/stop`, { method: "POST" }); } catch (e) { setError(e instanceof Error ? e.message : "Could not stop camera"); } }} uploadMessage={uploadMessage} />}
+        {view === "monitoring" && <MonitoringView cameras={cameras} liveFrames={liveFrames} readOnly={guestMode} dataAvailable={dataAvailable} hostedInference={model?.hosted_inference ?? null} privacyConsent={hostedPrivacyConsent} onPrivacyConsentChange={setHostedPrivacyConsent} analysisHistory={analysisHistory} onAdd={() => setCameraForm(true)} onUpload={uploadVideo} onImageUpload={uploadImage} imagePreview={imagePreview} imageInference={imageInference} imageInferenceMessage={imageInferenceMessage} imageInferenceLoading={imageInferenceLoading} onStart={async (id) => { try { await request(`/api/cameras/${id}/start`, { method: "POST" }); } catch (e) { setError(e instanceof Error ? e.message : "Could not start camera"); } }} onStop={async (id) => { try { await request(`/api/cameras/${id}/stop`, { method: "POST" }); } catch (e) { setError(e instanceof Error ? e.message : "Could not stop camera"); } }} uploadMessage={uploadMessage} />}
         {view === "alerts" && <AlertsView events={events} dataAvailable={dataAvailable} onUpdate={updateEvent} />}
         {view === "map" && <MapSection cameras={cameras} located={locatedCameras} dataAvailable={dataAvailable} />}
         {view === "analytics" && <AnalyticsView analytics={analytics} governmentData={governmentData} dataAvailable={dataAvailable} />}
@@ -486,14 +513,16 @@ function QuickCard({ icon: Icon, title, detail, onClick }: { icon: typeof Video;
 function EmptyState({ icon: Icon, title, description, action }: { icon: typeof Activity; title: string; description: string; action?: ReactNode }) {
   return <div className="my-5 flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed border-slate-800 px-6 text-center"><span className="mb-3 rounded-xl border border-slate-800 bg-white/[.02] p-3 text-slate-500"><Icon size={19} /></span><h4 className="text-xs font-medium text-slate-300">{title}</h4><p className="mt-2 max-w-md text-[11px] leading-5 text-slate-500">{description}</p>{action}</div>;
 }
-function MonitoringView({ cameras, liveFrames, readOnly, dataAvailable, onAdd, onUpload, onImageUpload, imagePreview, imageInference, imageInferenceMessage, imageInferenceLoading, onStart, onStop, uploadMessage }: { cameras: CameraRecord[]; liveFrames: Record<string, LiveFrame>; readOnly: boolean; dataAvailable: boolean; onAdd: () => void; onUpload: (file?: File) => void; onImageUpload: (file?: File) => void; imagePreview: string | null; imageInference: ImageInference | null; imageInferenceMessage: string; imageInferenceLoading: boolean; onStart: (id: string) => void; onStop: (id: string) => void; uploadMessage: string }) {
+function MonitoringView({ cameras, liveFrames, readOnly, dataAvailable, hostedInference, privacyConsent, onPrivacyConsentChange, analysisHistory, onAdd, onUpload, onImageUpload, imagePreview, imageInference, imageInferenceMessage, imageInferenceLoading, onStart, onStop, uploadMessage }: { cameras: CameraRecord[]; liveFrames: Record<string, LiveFrame>; readOnly: boolean; dataAvailable: boolean; hostedInference: HostedInferenceStatus | null; privacyConsent: boolean; onPrivacyConsentChange: (value: boolean) => void; analysisHistory: AnalysisHistoryRecord[]; onAdd: () => void; onUpload: (file?: File) => void; onImageUpload: (file?: File) => void; imagePreview: string | null; imageInference: ImageInference | null; imageInferenceMessage: string; imageInferenceLoading: boolean; onStart: (id: string) => void; onStop: (id: string) => void; uploadMessage: string }) {
   return <><SectionHeading eyebrow="Source monitoring" title="Live camera monitoring" detail="No stream is shown unless a real, authorized source and processing worker are available." />
+    {hostedInference?.selected && <section className="panel mb-4 rounded-xl p-4"><h3 className="text-xs font-medium text-slate-200">Hosted image inference privacy</h3><p className="mt-2 text-[10px] leading-5 text-slate-400">{hostedInference.configured ? hostedInference.privacy_notice : "Hugging Face is selected but its backend token is not configured. Uploads will not be sent."} Model: <a className="text-cyan underline" href={hostedInference.model_url} target="_blank" rel="noreferrer">{hostedInference.model}</a>. Object detection only; not accident detection.</p>{hostedInference.configured && <label className="mt-3 flex items-start gap-2 text-[10px] leading-5 text-slate-300"><input type="checkbox" checked={privacyConsent} onChange={(event) => onPrivacyConsentChange(event.target.checked)} className="mt-1 accent-cyan" /><span>I agree to send the selected image or up to {hostedInference.max_video_frames} sampled video frames to Hugging Face for object detection. NexSafe does not retain the uploaded media.</span></label>}</section>}
     {!readOnly && dataAvailable && <div className="mb-5 flex flex-wrap gap-2"><button onClick={onAdd} className="inline-flex items-center gap-2 rounded-lg bg-cyan px-3.5 py-2.5 text-xs font-semibold text-midnight"><Plus size={14} /> Register camera</button><label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 px-3.5 py-2.5 text-xs text-slate-300 transition hover:border-cyan/40"><Eye size={14} /> Analyze image<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={(e) => { onImageUpload(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label><label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border border-slate-700 px-3.5 py-2.5 text-xs text-slate-300 transition hover:border-cyan/40"><ArrowDownToLine size={14} /> Analyze video upload<input type="file" accept="video/mp4,video/quicktime,video/x-msvideo,video/webm" className="hidden" onChange={(e) => { onUpload(e.target.files?.[0]); e.currentTarget.value = ""; }} /></label></div>}
     {imageInferenceMessage && <section className="panel mb-5 rounded-xl p-4"><p role="status" className={`text-xs ${imageInference ? "text-cyan" : "text-amber-200"}`}>{imageInferenceLoading ? "Running actual detector inference…" : imageInferenceMessage}</p>
       {imagePreview && <div className="relative mt-3 inline-block max-w-full overflow-hidden rounded-lg border border-slate-800"><img src={imagePreview} alt="Uploaded image analyzed by the configured detector" className="block h-auto max-h-[560px] max-w-full object-contain" />{imageInference && <svg className="absolute inset-0 h-full w-full" viewBox={`0 0 ${imageInference.image_dimensions.width} ${imageInference.image_dimensions.height}`} preserveAspectRatio="none" aria-label="Actual vehicle detection bounding boxes">{imageInference.detections.map((detection, index) => { const [x1, y1, x2, y2] = detection.xyxy; return <g key={`${detection.class_id}-${index}`}><rect x={x1} y={y1} width={x2 - x1} height={y2 - y1} fill="none" stroke="#00E5FF" strokeWidth={Math.max(2, imageInference.image_dimensions.width / 500)} /><text x={x1} y={Math.max(14, y1 - 4)} fill="#00E5FF" fontSize={Math.max(14, imageInference.image_dimensions.width / 80)} paintOrder="stroke" stroke="#080D18" strokeWidth="3">{detection.label} {(detection.confidence * 100).toFixed(1)}%</text></g>; })}</svg>}</div>}
       {imageInference && imageInference.detections.length === 0 && <p className="mt-2 text-[10px] text-slate-500">The detector returned no objects for this image.</p>}
     </section>}
     {uploadMessage && <div className="mb-4 rounded-lg border border-slate-800 bg-slatepanel/70 p-3 text-xs text-slate-300">{uploadMessage}</div>}
+    {analysisHistory.length > 0 && <section className="panel mb-5 rounded-xl p-4"><h3 className="text-xs font-medium text-slate-200">Recent saved analyses</h3><div className="mt-3 divide-y divide-white/[.05]">{analysisHistory.slice(0, 5).map((analysis) => <div key={analysis.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-[10px]"><span className="text-slate-300">{analysis.media_type} · {analysis.task} · {analysis.model}</span><span className="text-slate-500">{analysis.result.detections?.length ?? 0} detections · {analysis.processed_frames} {analysis.media_type === "video" ? "sampled frames" : "image"} · {new Date(analysis.created_at).toLocaleString()}</span></div>)}</div><p className="mt-2 text-[9px] text-slate-600">Metadata and detections only; uploaded media are not retained.</p></section>}
     {cameras.length ? <div className="grid gap-4 md:grid-cols-2">{cameras.map((camera) => <article key={camera.id} className="panel overflow-hidden rounded-xl">
       <div className="relative grid aspect-video place-items-center bg-[#080e18]">{liveFrames[camera.id]?.image ? <img src={liveFrames[camera.id].image} alt={`Live annotated frame from ${camera.name}`} className="h-full w-full object-contain" /> : <div className="grid h-14 w-14 place-items-center rounded-2xl border border-slate-800 bg-white/[.02] text-slate-600"><Video size={23} /></div>}<div className="absolute left-4 top-4 flex items-center gap-2 rounded-md border border-slate-700 bg-midnight/80 px-2 py-1 text-[9px] text-slate-400"><span className={`h-1.5 w-1.5 rounded-full ${(liveFrames[camera.id]?.status ?? camera.connection_status) === "connected" ? "bg-emerald-400" : "bg-slate-500"}`} /> {(liveFrames[camera.id]?.status ?? camera.connection_status) === "not_started" ? "NOT STARTED" : (liveFrames[camera.id]?.status ?? camera.connection_status).toUpperCase()}</div>{liveFrames[camera.id]?.image ? <div className="absolute bottom-3 right-3 rounded bg-midnight/85 px-2 py-1 technical text-[9px] text-cyan">{liveFrames[camera.id].fps?.toFixed(1)} FPS · {liveFrames[camera.id].latency?.toFixed(1)} ms · {liveFrames[camera.id].detections} detections · flow {liveFrames[camera.id].opticalFlow?.toFixed(2) ?? "—"}</div> : <div className="absolute bottom-4 left-4 right-4 text-center text-[10px] text-slate-600">{!dataAvailable ? "Camera service unavailable" : "Awaiting a verified real stream connection"}</div>}{liveFrames[camera.id]?.risk && <div className="absolute left-3 right-3 top-12 rounded-md border border-amber-300/30 bg-midnight/90 p-2 text-[10px] text-amber-100">PREDICTED RISK · {liveFrames[camera.id].risk?.class} · {(liveFrames[camera.id].risk?.risk_score ?? 0).toFixed(3)} · {((liveFrames[camera.id].risk?.confidence ?? 0) * 100).toFixed(1)}% model confidence <span className="block text-[9px] text-amber-100/60">Model output only; not a confirmed accident. Weather used by model: {liveFrames[camera.id].risk?.weather_used_by_model ? "yes" : "no"}. {liveFrames[camera.id].risk?.environmental_context?.weather?.status === "available" ? `Linked IMD station ${liveFrames[camera.id].risk?.environmental_context?.weather?.station_id} observed ${liveFrames[camera.id].risk?.environmental_context?.weather?.observed_at || "time unavailable"} UTC (context only).` : ""}</span></div>}</div>
       <div className="flex items-center justify-between p-4"><div><h3 className="text-xs font-medium">{camera.name}</h3><p className="technical mt-1 text-[9px] text-slate-600">{camera.id.slice(0, 8)} · REGISTERED {new Date(camera.created_at).toLocaleDateString()}</p><p className="mt-1 text-[9px] text-slate-500">IMD context {camera.weather_station_id ? `· station ${camera.weather_station_id}` : "not linked"}</p></div>{!readOnly && (liveFrames[camera.id]?.status === "connected" || liveFrames[camera.id]?.status === "connecting" ? <button onClick={() => onStop(camera.id)} className="rounded-md border border-emergency/30 px-3 py-1.5 text-[10px] text-rose-200 hover:bg-emergency/10">Stop processing</button> : <button onClick={() => onStart(camera.id)} className="rounded-md border border-slate-700 px-3 py-1.5 text-[10px] text-slate-400 hover:border-cyan/40 hover:text-cyan">Start processing</button>)}</div>
@@ -610,6 +639,16 @@ function ModelView({ model, datasetStatus, dataAvailable }: { model: Model | nul
   const detectorTraining = model?.detector?.training_metrics;
   const finalTrainingLosses = detectorTraining?.last_epoch_training_losses;
   return <><SectionHeading eyebrow="Model governance" title="Model center" detail="Only information exposed by the loaded runtime is displayed; evaluation metrics are never inferred from detections." />
+    <section className="panel mb-4 rounded-xl p-5"><h3 className="text-sm font-medium">Hosted inference provider</h3><div className="mt-3 divide-y divide-white/[.06]">{[
+      ["Provider", model?.hosted_inference?.provider || "Unavailable"],
+      ["Selection", model?.hosted_inference?.selected ? "Selected in backend configuration" : "Not selected"],
+      ["Credential", model?.hosted_inference?.configured ? "Present in backend environment" : model?.hosted_inference?.selected ? "HF_INFERENCE_TOKEN required" : "Not required until enabled"],
+      ["Model", model?.hosted_inference?.model || "Not configured"],
+      ["Task", model?.hosted_inference?.task || "Not configured"],
+      ["Connection", model?.hosted_inference?.configured ? "Not checked until the user consents to an inference request" : "Unavailable"],
+    ].map(([label, value]) => <div key={label} className="flex items-start justify-between gap-4 py-2 text-[10px]"><span className="text-slate-500">{label}</span><span className="text-right text-slate-300">{value}</span></div>)}</div>
+      {model?.hosted_inference && <><p className="mt-3 text-[10px] leading-5 text-amber-100/80">{model.hosted_inference.limitations} Hosted inference may consume paid Hugging Face credits; Free accounts do not include Inference Providers credits.</p><p className="mt-2 text-[10px] leading-5 text-slate-500">To opt in, set INFERENCE_PROVIDER=huggingface and HF_INFERENCE_TOKEN in the backend-only .env, restart the API, then accept the image/frame privacy notice. Never put the token in NEXT_PUBLIC_* settings. The model is generic COCO object detection—not accident classification or risk estimation.</p><a className="mt-2 inline-block text-[10px] text-cyan underline" href={model.hosted_inference.provider_url} target="_blank" rel="noreferrer">Provider API documentation</a></>}
+    </section>
     <section className="panel mb-4 rounded-xl p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-medium">Dataset availability and suitability</h3><p className="mt-1 text-[10px] text-slate-500">{datasetStatus?.dataset?.name || "Dataset source unavailable"} · local acquisition audit</p></div><span className={`rounded-md border px-2 py-1 text-[9px] ${datasetStatus?.status === "complete" ? "border-emerald-400/20 text-emerald-300" : "border-amber-400/20 text-amber-200"}`}>{dataAvailable ? datasetStatus?.status?.toUpperCase() || "UNAVAILABLE" : "NOT CONNECTED"}</span></div>
       <p className="mt-3 text-xs leading-5 text-slate-300">{datasetStatus?.message || "No dataset audit is available from the backend."}</p>
       {datasetStatus?.dataset && <><p className="mt-2 break-all text-[10px] leading-5 text-slate-500">Source: {datasetStatus.dataset.source} · License: {datasetStatus.dataset.license} · Revision: {datasetStatus.dataset.revision || "Not recorded"}</p><div className="mt-3 grid gap-2 sm:grid-cols-2">{datasetStatus.splits.map((split) => <div key={split.name} className="rounded-lg border border-slate-800 p-3"><div className="flex justify-between gap-2 text-[10px]"><span className="text-slate-300">{split.name} split</span><span className="text-amber-200">{split.status}</span></div><div className="mt-2 grid grid-cols-2 gap-2 text-[9px] text-slate-500"><span>Images available <b className="text-slate-200">{split.available_images?.toLocaleString() ?? "Not reported"}</b></span><span>Annotated images <b className="text-slate-200">{split.annotated_images?.toLocaleString() ?? "Not reported"}</b></span><span>Images missing <b className="text-slate-200">{split.missing_images?.toLocaleString() ?? "Not reported"}</b></span><span>Annotations <b className="text-slate-200">{split.annotations?.toLocaleString() ?? "Not reported"}</b></span><span>Data on disk <b className="text-slate-200">{split.image_bytes === null ? "Not reported" : `${(split.image_bytes / 1024 ** 3).toFixed(2)} GiB`}</b></span><span>Image dimension issues <b className="text-slate-200">{split.dimension_mismatches?.toLocaleString() ?? "Not reported"}</b></span></div></div>)}</div><p className="mt-3 text-[9px] text-slate-600">Tasks supported by source labels: {datasetStatus.dataset.supported_tasks.join(", ") || "Not reported"} · Last audit: {datasetStatus.last_audited || "Not recorded"}</p></>}

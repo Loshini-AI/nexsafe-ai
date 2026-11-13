@@ -29,7 +29,7 @@ production-ready accident-prediction service.
 | Authentication | COMPLETED (tested API flow) | Registration bootstrap, Argon2 password hashing, login, protected route, revocation, and failure cases are covered by the backend tests. The first registered user becomes admin, but there are no admin-only management routes. |
 | Local SQLite database | COMPLETED (local runtime) | Live health reports SQLite available. SQLAlchemy creates tables at startup; file-backed persistence and table initialization are covered by backend tests. The configured existing database is `D:\NexSafeAI\data\nexsafe.db`; it was preserved. |
 | Cameras and ownership | PARTIALLY COMPLETED | Authenticated camera CRUD/start/stop APIs are implemented with ownership checks and encrypted sources. Live camera operation was not exercised; a configured detector checkpoint is absent. |
-| Image/video detection | PARTIALLY COMPLETED | Upload endpoints validate supported types and size limits and fail closed when checkpoints are unavailable. Real model inference could not be exercised because no checkpoint is configured. |
+| Image/video detection | PARTIALLY COMPLETED | Local endpoints still require configured checkpoints. An optional hosted Hugging Face object detector now requires explicit consent, uses bounded video frame sampling, and never reports accident risk. Provider behavior is covered with mocked responses; no credential is configured, so external inference is unverified. |
 | Accident/temporal predictions | NOT AVAILABLE | CNN-LSTM code exists, but no validated checkpoint is configured. The live model endpoint reports the classifier unavailable. |
 | Structured road-risk predictions | NOT AVAILABLE | Training/loading/inference code exists, but no trained checkpoint is configured. The live model endpoint reports the model unavailable. |
 | Analytics and dashboard data | PARTIALLY COMPLETED | Authenticated APIs aggregate persisted events/frames and report insufficient data instead of fabricating charts. There is no live verified accident feed. |
@@ -39,7 +39,7 @@ production-ready accident-prediction service.
 | Dataset management | PARTIALLY COMPLETED | Catalog, pinned-revision UVH-26 preparation, resumable download, and audit tools exist. The local UVH-26 audit is incomplete; the management interface is status-oriented rather than a full download/repair console. |
 | Dataset integrity | PARTIALLY COMPLETED | Live audit reports 5,472/21,349 training images, 15,877 missing, no validation images, and two dimension mismatches. Dataset root is external at `D:\NexSafeAI\datasets\uvh26`. No duplicate/corruption-wide fresh scan was run. |
 | Model center | PARTIALLY COMPLETED | API/UI expose detector, temporal and structured model status and available provenance/metrics. Training controls, artifact lifecycle, and a trained model are absent. |
-| Prediction history | PARTIALLY COMPLETED | Event history and image/video inference records exist in the backend schema/services. A complete user-facing saved-analysis history, export, and profile-linked UX are not implemented. |
+| Prediction history | PARTIALLY COMPLETED | Authenticated `GET /api/analyses` persists and returns per-user image/video detection metadata without retaining media; recent analyses appear in monitoring. It is not a full exportable history page, and hosted results are object detections, not accident predictions. |
 | User profile/settings | NOT IMPLEMENTED | No profile read/update/password-change/settings API or corresponding page is present. |
 | Admin dashboard | NOT IMPLEMENTED | Initial-admin role assignment exists. There are no admin authorization dependencies or admin-management APIs/pages. |
 | Backup | COMPLETED (verified SQLite backup) | `backend/app/backup.py` uses SQLite online backup and verifies integrity; unit tests cover snapshot reuse and missing/non-SQLite databases. |
@@ -69,13 +69,18 @@ production-ready accident-prediction service.
   bounded event bus. The health endpoint reports the active mode.
 - **ML:** Optional YOLO object detection, CNN-LSTM temporal risk, and structured
   risk pipelines. The APIs deliberately return unavailable/503 until their
-  actual compatible checkpoints and verified metadata are configured.
+  actual compatible checkpoints and verified metadata are configured. An
+  optional `facebook/detr-resnet-50` Hugging Face path is available for generic
+  COCO object detection only; it is not an accident classifier or risk model.
+  Hosted provider integration is mocked-tested but live calls remain unverified
+  without a backend-only Hugging Face token and provider credits.
 - **External data:** Optional Open-Meteo and configured government connectors.
   Live credentials/authorized resource IDs are not supplied by the code audit.
 
 ## API surfaces found
 
-`/api/health`, `/api/model`, `/api/datasets/status`, authentication
+`/api/health`, `/api/model`, `/api/datasets/status`, authenticated
+`/api/analyses` metadata history, authentication
 registration/status/token/logout, camera list/create/delete/start/stop, video
 analysis/tracking, vehicle image detection, temporal accident detection,
 structured road risk, event list/update, overview, analytics, system metrics,
@@ -83,8 +88,16 @@ weather, government snapshots/refresh, and `/api/ws`.
 
 The APIs for health, model state, dataset state, authentication flows,
 dashboard/analytics behavior, and unavailable-model handling have unit or live
-smoke coverage. No real camera, configured government feed, or model-backed
-inference was available to verify end to end.
+smoke coverage. No real camera, configured government feed, Hugging Face credential, or trained
+accident model was available to verify end to end.
+
+Hosted Hugging Face inference is opt-in via backend `.env` settings only.
+Authenticated users must consent before an image or a bounded set of sampled
+video frames is sent to the provider. NexSafe does not persist the uploaded
+media; it stores only per-user analysis metadata/detections. Hugging Face
+Inference Providers may be paid, and free accounts do not include provider
+credits. This integration does not make the unavailable local accident or
+structured-risk models available.
 
 ## Local data and model inventory
 
@@ -105,10 +118,13 @@ inference was available to verify end to end.
 
 | Check | Result |
 |---|---|
-| Backend unit/integration suite, `python -m unittest discover -s tests -p "test_*.py" -v` | **25 passed** (2026-11-13); includes auth, dashboard/analytics, dataset tools, and three SQLite-backup tests. |
-| Frontend `npm run check` | **Passed** (`tsc --noEmit`). |
-| Frontend `npm run build` | **Passed**; Next.js generated `/`, `/_not-found`, and `/dashboard`. |
-| Backend `pip check` | **Passed**; no broken requirements reported. |
+| Backend unit/integration suite, `python -m unittest discover -s tests -p "test_*.py" -v` | **32 passed** (2026-11-13); includes mocked hosted image/video provider, consent-gated image analysis, metadata-only history, and prior auth, dashboard/analytics, dataset, and backup coverage. |
+| Frontend `npm run check` | **Passed** (`tsc --noEmit`) after hosted inference UI changes. |
+| Frontend `npm run build` | **Passed**; Next.js generated `/`, `/_not-found`, and `/dashboard` after hosted inference UI changes. |
+| Backend `pip check` and `compileall` | **Passed**; no broken requirements or syntax errors. |
+| Alembic chain on disposable SQLite | **Passed** through `0004_analysis_history`; verified the analysis table and owner/created index. The preserved local user database was not migrated. |
+| Hosted provider behavior | **Passed with mocked HTTP responses** for detections, error handling, privacy consent, bounded frame sampling, and no accident-risk claims. |
+| Live Hugging Face inference | **Not run**; no backend inference token is configured, and no external media was sent. |
 | Windows launcher parser check | **Passed** after launcher update. |
 | Live `/api/health` | **200**; database available, realtime process-local. |
 | Live `/api/model` | **200**; all three models correctly unavailable without weights. |

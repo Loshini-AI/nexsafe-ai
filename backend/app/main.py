@@ -15,7 +15,7 @@ from cryptography.fernet import Fernet
 
 import httpx
 from jose import JWTError, jwt
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Body, Depends, FastAPI, File, Form, HTTPException, Query, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy import func, select, text
@@ -27,8 +27,9 @@ from app.camera_worker import runtime as camera_runtime, start_worker, stop_work
 from app.db import engine, get_db, initialize_database, SessionLocal
 from app.dataset_status import load_dataset_status
 from app.government_data_service import government_refresh_loop, refresh_requested, government_status
+from app.hosted_inference import HostedInferenceError, hosted_inference, hosted_provider_status
 from app.inference import model_service
-from app.models import Camera, Event, InferenceRecord, User, UserSession
+from app.models import AnalysisRecord, Camera, Event, InferenceRecord, User, UserSession
 from app.realtime import publish_event, redis_available, redis_client, subscribe
 from app.schemas import CameraCreate, CameraOut, EventOut, EventUpdate, RegistrationRequest, Token
 from app.security import authenticate_token, current_user, create_token, hash_password, oauth2, verify_password
@@ -119,6 +120,7 @@ async def model_status():
         "message": None if model_service.available else model_service.error,
         "architecture": "Ultralytics YOLO object detector" if model_service.available else None,
         "weights_configured": bool(settings.model_weights),
+        "hosted_inference": hosted_provider_status(),
         "detector": {
             "status": "loaded" if model_service.available else "unavailable",
             "error": model_service.error,
@@ -364,7 +366,12 @@ async def stop_camera(camera_id: str, user: User = Depends(current_user), db: As
 
 @app.post("/api/videos/analyze")
 @app.post("/api/inference/vehicle-tracking")
-async def analyze_video(file: UploadFile = File(...), user: User = Depends(current_user), db: AsyncSession = Depends(get_db)):
+async def analyze_video(
+    file: UploadFile = File(...),
+    privacy_consent: bool = Form(default=False),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     extensions = {
         "video/mp4": ".mp4",
         "video/quicktime": ".mov",
@@ -373,19 +380,47 @@ async def analyze_video(file: UploadFile = File(...), user: User = Depends(curre
     }
     if file.content_type not in extensions:
         raise HTTPException(415, "Unsupported video format")
-    if not model_service.available:
+    use_hosted_provider = settings.inference_provider == "huggingface"
+    if use_hosted_provider and not privacy_consent:
+        raise HTTPException(
+            400,
+            "Confirm that sampled video frames may be sent to Hugging Face before analysis",
+        )
+    if use_hosted_provider and not hosted_inference.configured:
+        raise HTTPException(
+            503,
+            "Hugging Face inference is selected but HF_INFERENCE_TOKEN is not configured",
+        )
+    if not use_hosted_provider and not model_service.available:
         raise HTTPException(503, "AI MODEL UNAVAILABLE — INFERENCE DISABLED.")
     path = ""
+    analysis_record = None
     try:
         fd, path = tempfile.mkstemp(suffix=extensions[file.content_type], dir=settings.upload_dir)
         size = 0
         with os.fdopen(fd, "wb") as target:
             while chunk := await file.read(1024 * 1024):
                 size += len(chunk)
-                if size > 200 * 1024 * 1024:
+                if size > settings.hf_video_max_upload_bytes:
                     raise HTTPException(413, "Video exceeds the 200 MB upload limit")
                 target.write(chunk)
-        result = await asyncio.to_thread(model_service.analyze_video, path)
+        if use_hosted_provider:
+            result = await hosted_inference.detect_video(path)
+            analysis_record = AnalysisRecord(
+                owner_id=user.id,
+                provider=result["provider_id"],
+                model=result["model"],
+                task=result["task"],
+                media_type="video",
+                media_width=result["media_dimensions"]["width"],
+                media_height=result["media_dimensions"]["height"],
+                processed_frames=result["frames_sampled"],
+                latency_ms=result["inference_latency_ms_mean"],
+                result=result,
+            )
+            db.add(analysis_record)
+        else:
+            result = await asyncio.to_thread(model_service.analyze_video, path)
         db.add(InferenceRecord(owner_id=user.id, processed_frames=result["frames_processed"],
                                latency_ms=result["inference_latency_ms_mean"] or 0))
         risk_classes = {
@@ -416,6 +451,8 @@ async def analyze_video(file: UploadFile = File(...), user: User = Depends(curre
                 }),
             ))
         await db.commit()
+        if analysis_record is not None:
+            result["analysis_id"] = analysis_record.id
         if highest_risk is not None:
             await publish_event(user.id, {
                 "type": "video.risk_prediction",
@@ -425,6 +462,8 @@ async def analyze_video(file: UploadFile = File(...), user: User = Depends(curre
         return result
     except HTTPException:
         raise
+    except HostedInferenceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(422, str(exc)) from exc
     finally:
@@ -434,11 +473,26 @@ async def analyze_video(file: UploadFile = File(...), user: User = Depends(curre
 
 
 @app.post("/api/inference/vehicle-detection")
-async def detect_image(file: UploadFile = File(...), user: User = Depends(current_user)):
-    del user
+async def detect_image(
+    file: UploadFile = File(...),
+    privacy_consent: bool = Form(default=False),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
     if file.content_type not in {"image/jpeg", "image/png", "image/webp"}:
         raise HTTPException(415, "Supported image types are JPEG, PNG, and WebP")
-    if not model_service.available:
+    use_hosted_provider = settings.inference_provider == "huggingface"
+    if use_hosted_provider and not privacy_consent:
+        raise HTTPException(
+            400,
+            "Confirm that the image may be sent to Hugging Face before analysis",
+        )
+    if use_hosted_provider and not hosted_inference.configured:
+        raise HTTPException(
+            503,
+            "Hugging Face inference is selected but HF_INFERENCE_TOKEN is not configured",
+        )
+    if not use_hosted_provider and not model_service.available:
         raise HTTPException(503, "AI MODEL UNAVAILABLE — INFERENCE DISABLED.")
     content = await file.read(20 * 1024 * 1024 + 1)
     await file.close()
@@ -448,16 +502,77 @@ async def detect_image(file: UploadFile = File(...), user: User = Depends(curren
     if frame is None:
         raise HTTPException(422, "Uploaded file is not a readable image")
     try:
-        result = await asyncio.to_thread(model_service.detect_frame, frame)
-        return {
-            **result,
-            "image_dimensions": {
+        if use_hosted_provider:
+            result = await hosted_inference.detect_image(content)
+        else:
+            result = await asyncio.to_thread(model_service.detect_frame, frame)
+            result["image_dimensions"] = {
                 "width": int(frame.shape[1]),
                 "height": int(frame.shape[0]),
-            },
-        }
+            }
+        record = AnalysisRecord(
+            owner_id=user.id,
+            provider=result.get("provider_id", "local"),
+            model=result.get(
+                "model",
+                result.get("inference_type", "configured_local_model"),
+            ),
+            task=result.get("task", "object-detection"),
+            media_type="image",
+            media_width=result["image_dimensions"]["width"],
+            media_height=result["image_dimensions"]["height"],
+            processed_frames=1,
+            latency_ms=result["latency_ms"],
+            result=result,
+        )
+        db.add(record)
+        await db.commit()
+        result["analysis_id"] = record.id
+        result["created_at"] = record.created_at
+        return result
+    except HostedInferenceError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
+    except SQLAlchemyError as exc:
+        await db.rollback()
+        logger.exception("Image analysis result could not be saved")
+        raise HTTPException(
+            500,
+            "Image analysis completed but could not be saved",
+        ) from exc
+
+
+@app.get("/api/analyses")
+async def list_analyses(
+    limit: int = Query(default=50, ge=1, le=100),
+    user: User = Depends(current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    analyses = (
+        await db.scalars(
+            select(AnalysisRecord)
+            .where(AnalysisRecord.owner_id == user.id)
+            .order_by(AnalysisRecord.created_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [
+        {
+            "id": item.id,
+            "provider": item.provider,
+            "model": item.model,
+            "task": item.task,
+            "media_type": item.media_type,
+            "media_width": item.media_width,
+            "media_height": item.media_height,
+            "processed_frames": item.processed_frames,
+            "latency_ms": item.latency_ms,
+            "result": item.result,
+            "created_at": item.created_at,
+        }
+        for item in analyses
+    ]
 
 
 @app.post("/api/inference/accident-detection")

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from types import SimpleNamespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite://")
 os.environ.setdefault("JWT_SECRET", "test-only-jwt-secret-with-more-than-32-characters")
@@ -14,6 +14,9 @@ os.environ.setdefault(
 )
 
 import httpx
+import cv2
+import numpy as np
+from pydantic import SecretStr
 from sqlalchemy import inspect, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -163,6 +166,101 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(revoked.status_code, 401)
 
+    async def test_hosted_image_requires_privacy_consent_and_saves_metadata_only(self):
+        registration = await self.client.post(
+            "/api/auth/register",
+            json={
+                "full_name": "Hosted Analysis User",
+                "email": "hosted-analysis@example.invalid",
+                "password": "test-only-password-456A!",
+            },
+        )
+        self.assertEqual(registration.status_code, 201, registration.text)
+        headers = {"Authorization": f"Bearer {registration.json()['access_token']}"}
+        previous_provider = main.settings.inference_provider
+        previous_token = main.settings.hf_inference_token
+        main.settings.inference_provider = "huggingface"
+        main.settings.hf_inference_token = None
+
+        encoded, image = cv2.imencode(
+            ".png",
+            np.zeros((20, 32, 3), dtype=np.uint8),
+        )
+        self.assertTrue(encoded)
+        image_bytes = image.tobytes()
+        try:
+            response = await self.client.post(
+                "/api/inference/vehicle-detection",
+                files={"file": ("road.png", image_bytes, "image/png")},
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 400, response.text)
+            self.assertIn("Confirm", response.json()["detail"])
+
+            response = await self.client.post(
+                "/api/inference/vehicle-detection",
+                data={"privacy_consent": "true"},
+                files={"file": ("road.png", image_bytes, "image/png")},
+                headers=headers,
+            )
+            self.assertEqual(response.status_code, 503, response.text)
+            self.assertIn("HF_INFERENCE_TOKEN", response.json()["detail"])
+
+            main.settings.hf_inference_token = SecretStr("unit-test-only-token")
+            provider_result = {
+                "detections": [
+                    {
+                        "class_id": -1,
+                        "label": "car",
+                        "confidence": 0.9,
+                        "xyxy": [1, 2, 20, 18],
+                    }
+                ],
+                "latency_ms": 12.5,
+                "image_dimensions": {"width": 32, "height": 20},
+                "provider": "Hugging Face Inference Providers",
+                "provider_id": "huggingface",
+                "model": "facebook/detr-resnet-50",
+                "task": "object-detection",
+                "prediction_type": "object_detection",
+                "confirmed_accident": False,
+                "notice": "Generic object detections only.",
+            }
+            with patch.object(
+                main.hosted_inference,
+                "detect_image",
+                new=AsyncMock(return_value=provider_result),
+            ) as hosted_detect:
+                response = await self.client.post(
+                    "/api/inference/vehicle-detection",
+                    data={"privacy_consent": "true"},
+                    files={"file": ("road.png", image_bytes, "image/png")},
+                    headers=headers,
+                )
+                self.assertEqual(response.status_code, 200, response.text)
+                hosted_detect.assert_awaited_once_with(image_bytes)
+
+            result = response.json()
+            self.assertEqual(result["provider_id"], "huggingface")
+            self.assertEqual(result["detections"][0]["label"], "car")
+            self.assertFalse(result["confirmed_accident"])
+            self.assertTrue(result["analysis_id"])
+            self.assertNotIn(image_bytes.hex(), response.text)
+
+            history = await self.client.get("/api/analyses", headers=headers)
+            self.assertEqual(history.status_code, 200, history.text)
+            self.assertEqual(len(history.json()), 1)
+            self.assertEqual(history.json()[0]["id"], result["analysis_id"])
+            self.assertEqual(history.json()[0]["media_type"], "image")
+            self.assertEqual(history.json()[0]["result"]["detections"][0]["label"], "car")
+            self.assertNotIn("image_bytes", history.json()[0])
+
+            unauthorized_history = await self.client.get("/api/analyses")
+            self.assertEqual(unauthorized_history.status_code, 401)
+        finally:
+            main.settings.inference_provider = previous_provider
+            main.settings.hf_inference_token = previous_token
+
     async def test_startup_initializer_creates_database_tables(self):
         with tempfile.TemporaryDirectory() as directory:
             database_url = f"sqlite+aiosqlite:///{Path(directory) / 'startup.db'}"
@@ -178,6 +276,7 @@ class AuthApiTests(unittest.IsolatedAsyncioTestCase):
                     )
                 self.assertIn("users", tables)
                 self.assertIn("user_sessions", tables)
+                self.assertIn("analysis_records", tables)
             finally:
                 await startup_engine.dispose()
 

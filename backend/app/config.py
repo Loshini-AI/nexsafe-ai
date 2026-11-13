@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,6 +25,14 @@ class Settings(BaseSettings):
     jwt_expire_minutes: int = 60
     allow_registration: bool = False
     model_weights: str | None = None
+    inference_provider: Literal["local", "huggingface"] = "local"
+    hf_inference_token: SecretStr | None = None
+    hf_object_detection_model: str = Field(
+        default="facebook/detr-resnet-50",
+        pattern=r"^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$",
+    )
+    hf_video_max_frames: int = Field(default=8, ge=1, le=16)
+    hf_video_max_upload_bytes: int = Field(default=200 * 1024 * 1024, ge=1)
     accident_model_weights: str | None = None
     road_risk_model_weights: str | None = None
     road_risk_positive_classes: str = ""

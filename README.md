@@ -89,6 +89,31 @@ expose the API or Redis directly to the public internet.
   is configured with `MODEL_WEIGHTS`. If weights are absent or cannot load,
   the API reports `AI MODEL UNAVAILABLE — INFERENCE DISABLED.` and does not
   produce predictions.
+- An optional Hugging Face provider can run generic object detection without
+  installing local model weights. To opt in, set `INFERENCE_PROVIDER=huggingface`
+  and `HF_INFERENCE_TOKEN` in the backend-only `.env`, then restart the API.
+  The token must have Hugging Face Inference Providers permission. Never put it
+  in a `NEXT_PUBLIC_*` setting. The default `facebook/detr-resnet-50` model
+  detects generic COCO objects; it does not classify accidents or estimate
+  accident risk. Its object-detection confidence is not an accident probability.
+- Hosted image and video requests require an authenticated user's explicit
+  consent in the monitoring interface. When consented, the original image or
+  at most `HF_VIDEO_MAX_FRAMES` sampled video frames (default 8, maximum 16)
+  are transmitted to Hugging Face. Video sampling is not continuous video
+  analysis, tracking, or temporal accident detection. NexSafe removes temporary
+  uploads and stores only per-user analysis metadata/detections in SQLite;
+  review Hugging Face's applicable service terms and your organization's data
+  policy before enabling hosted inference. A successful provider connection is
+  not assumed until an actual request is made.
+- Hugging Face Inference Providers may incur charges. Free accounts do not
+  include Inference Providers credits; check the current
+  [Hugging Face pricing documentation](https://huggingface.co/docs/inference-providers/pricing)
+  before use. Missing credentials, unavailable credits, provider errors, and
+  rate limits are reported rather than replaced with simulated results.
+- Analysis history is available through authenticated `GET /api/analyses` and
+  is scoped to the logged-in user. SQLite startup creates the history table
+  automatically; Alembic migration `0004_analysis_history` supports migrated
+  deployments.
 - Set `MODEL_WEIGHTS=/models/your-weights.pt` and `MODEL_WEIGHTS_HOST` to the
   host directory containing your weights file. The mounted directory is read-only.
 - Set independent, long random values for `JWT_SECRET` and
@@ -189,6 +214,7 @@ multi-node high-availability deployment.
 - `POST /api/cameras/{camera_id}/start`, `POST /api/cameras/{camera_id}/stop`
 - `POST /api/videos/analyze` (authenticated multipart upload)
 - `POST /api/inference/vehicle-detection` (authenticated image inference)
+- `GET /api/analyses` (authenticated, user-scoped image/video analysis metadata)
 - `POST /api/inference/vehicle-tracking` (authenticated video + ByteTrack)
 - `POST /api/inference/accident-detection` (authenticated temporal video model)
 - `POST /api/inference/road-risk` (authenticated structured model)
